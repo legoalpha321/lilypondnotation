@@ -450,7 +450,7 @@ if (convert_text or convert_file) and lilypond_path:
             status_container.empty()
             
             # Force a rerun to show the download buttons
-            st.experimental_rerun()
+            st.rerun()
     
     except Exception as e:
         st.error(f"Error during conversion: {str(e)}")
