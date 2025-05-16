@@ -5,7 +5,6 @@ import tempfile
 import base64
 from pathlib import Path
 import platform
-import shutil
 
 st.set_page_config(
     page_title="LilyPond to PDF Converter",
@@ -16,8 +15,7 @@ st.set_page_config(
 # Title and description
 st.title("LilyPond to PDF Converter")
 st.markdown("""
-This app converts LilyPond notation to PDF sheet music. 
-You'll need to have LilyPond installed on the server where this Streamlit app is running.
+This app converts LilyPond notation to PDF sheet music and MIDI files.
 """)
 
 # Check if LilyPond is installed on the server
@@ -180,8 +178,6 @@ if 'midi_data' not in st.session_state:
     st.session_state.midi_data = None
 if 'midi_filename' not in st.session_state:
     st.session_state.midi_filename = None
-if 'wav_data' not in st.session_state:
-    st.session_state.wav_data = None
 
 with tab1:
     # Text input area
@@ -205,9 +201,6 @@ with tab1:
     
     # Output options
     output_filename = st.text_input("Output Filename", value="my_sheet_music")
-    
-    # Convert button
-    convert_text = st.button("Convert to PDF", key="convert_text")
 
 with tab2:
     # File upload
@@ -230,136 +223,35 @@ with tab2:
         default_name = "output"
         
     output_filename_file = st.text_input("Output Filename", value=default_name, key="file_output")
-    
-    # Convert button
-    convert_file = st.button("Convert to PDF", key="convert_file")
 
-# Function to find FluidSynth
-@st.cache_resource
-def find_fluidsynth():
-    """Attempt to find the FluidSynth executable on the system."""
-    try:
-        # Try to get FluidSynth version which will fail if not installed
-        result = subprocess.run(['fluidsynth', '--version'], 
-                                capture_output=True, text=True, check=False)
-        if result.returncode == 0:
-            return 'fluidsynth'  # It's in the PATH
-    except FileNotFoundError:
-        pass
-        
-    # Common installation paths to check
-    common_paths = []
+# Display download buttons if files have been generated
+if st.session_state.pdf_generated:
+    st.success("Files generated successfully!")
     
-    # Windows common paths
-    if os.name == 'nt':
-        program_files = os.environ.get('PROGRAMFILES', 'C:\\Program Files')
-        program_files_x86 = os.environ.get('PROGRAMFILES(X86)', 'C:\\Program Files (x86)')
-        
-        for base_dir in [program_files, program_files_x86]:
-            common_paths.extend([
-                os.path.join(base_dir, 'FluidSynth', 'bin', 'fluidsynth.exe'),
-            ])
-    
-    # macOS common paths
-    elif platform.system() == 'darwin':
-        common_paths.extend([
-            '/usr/local/bin/fluidsynth',
-            '/opt/homebrew/bin/fluidsynth'
-        ])
-    
-    # Linux common paths
-    else:
-        common_paths.extend([
-            '/usr/bin/fluidsynth',
-            '/usr/local/bin/fluidsynth'
-        ])
-    
-    # Check each path
-    for path in common_paths:
-        if os.path.isfile(path) and os.access(path, os.X_OK):
-            return path
-            
-    return None
-
-# Function to find SoundFont file
-@st.cache_resource
-def find_soundfont():
-    """Attempt to find a suitable SoundFont file on the system."""
-    # Common SoundFont paths
-    common_paths = []
-    
-    # Windows common paths
-    if os.name == 'nt':
-        program_files = os.environ.get('PROGRAMFILES', 'C:\\Program Files')
-        program_files_x86 = os.environ.get('PROGRAMFILES(X86)', 'C:\\Program Files (x86)')
-        
-        for base_dir in [program_files, program_files_x86]:
-            common_paths.extend([
-                os.path.join(base_dir, 'FluidSynth', 'share', 'soundfonts', 'default.sf2'),
-            ])
-    
-    # macOS common paths
-    elif platform.system() == 'darwin':
-        common_paths.extend([
-            '/usr/local/share/soundfonts/default.sf2',
-            '/opt/homebrew/share/soundfonts/default.sf2'
-        ])
-    
-    # Linux common paths
-    else:
-        common_paths.extend([
-            '/usr/share/sounds/sf2/FluidR3_GM.sf2',
-            '/usr/share/soundfonts/default.sf2',
-            '/usr/share/soundfonts/FluidR3_GM.sf2'
-        ])
-    
-    # Check each path
-    for path in common_paths:
-        if os.path.isfile(path):
-            return path
-            
-    return None
-
-# Function to convert MIDI to WAV
-def midi_to_wav(midi_path):
-    """Convert a MIDI file to WAV using FluidSynth."""
-    fluidsynth_path = find_fluidsynth()
-    soundfont_path = find_soundfont()
-    
-    if not fluidsynth_path:
-        st.warning("FluidSynth not found. Audio preview unavailable.")
-        return None
-        
-    if not soundfont_path:
-        st.warning("SoundFont not found. Audio preview unavailable.")
-        return None
-    
-    output_dir = os.path.dirname(midi_path)
-    wav_path = os.path.splitext(midi_path)[0] + '.wav'
-    
-    try:
-        command = [
-            fluidsynth_path,
-            '-ni',
-            soundfont_path,
-            midi_path,
-            '-F', wav_path
-        ]
-        
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True
+    # Create download buttons for both PDF and MIDI
+    if st.session_state.pdf_data is not None:
+        st.download_button(
+            label="Download PDF",
+            data=st.session_state.pdf_data,
+            file_name=st.session_state.pdf_filename,
+            mime="application/octet-stream",
+            key="pdf_download"
         )
-        
-        if result.returncode != 0:
-            st.warning(f"Error converting MIDI to WAV: {result.stderr}")
-            return None
-            
-        return wav_path
-    except Exception as e:
-        st.warning(f"Error in MIDI to WAV conversion: {str(e)}")
-        return None
+    
+    if st.session_state.midi_data is not None:
+        st.download_button(
+            label="Download MIDI",
+            data=st.session_state.midi_data,
+            file_name=st.session_state.midi_filename,
+            mime="audio/midi",
+            key="midi_download"
+        )
+    
+    st.info("PDF preview is not available due to browser security restrictions. Please download the PDF to view it.")
+
+# Convert buttons
+convert_text = st.button("Convert to PDF", key="convert_text", disabled=not lilypond_path)
+convert_file = st.button("Convert to PDF", key="convert_file", disabled=not lilypond_path or uploaded_file is None)
 
 # Processing logic
 if (convert_text or convert_file) and lilypond_path:
@@ -430,18 +322,9 @@ if (convert_text or convert_file) and lilypond_path:
                     midi_data = midi_file.read()
                     st.session_state.midi_data = midi_data
                     st.session_state.midi_filename = f"{output_name}.midi"
-                
-                # Try to convert MIDI to WAV for audio playback
-                wav_path = midi_to_wav(final_midi_path)
-                if wav_path and os.path.exists(wav_path):
-                    with open(wav_path, "rb") as wav_file:
-                        st.session_state.wav_data = wav_file.read()
-                else:
-                    st.session_state.wav_data = None
             else:
                 st.session_state.midi_data = None
                 st.session_state.midi_filename = None
-                st.session_state.wav_data = None
             
             # Mark as successful
             st.session_state.pdf_generated = True
@@ -462,9 +345,9 @@ st.markdown("""
 1. Enter LilyPond notation or upload a .ly file
 2. Set your desired output filename
 3. Click "Convert to PDF"
-4. Download the generated PDF
+4. Download the generated PDF and MIDI files
 
 ### About LilyPond
-[LilyPond](https://lilypond.org/) is an open-source music engraving program that produces beautiful sheet music. 
+[LilyPond](https://lilypond.org/) is an open-source music engraving program that produces beautiful sheet music.
 This app requires LilyPond to be installed on the server where Streamlit is running.
 """)
