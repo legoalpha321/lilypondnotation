@@ -1,1 +1,4 @@
 lilypond
+fonts-texgyre
+fluidsynth
+soundfont-fluid

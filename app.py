@@ -5,6 +5,7 @@ import tempfile
 import base64
 from pathlib import Path
 import platform
+import shutil
 
 st.set_page_config(
     page_title="LilyPond to PDF Converter",
@@ -168,6 +169,20 @@ lower = \relative c {
 # Create tabs
 tab1, tab2 = st.tabs(["Input Text", "Upload File"])
 
+# Initialize session state for storing generated files
+if 'pdf_generated' not in st.session_state:
+    st.session_state.pdf_generated = False
+if 'pdf_data' not in st.session_state:
+    st.session_state.pdf_data = None
+if 'pdf_filename' not in st.session_state:
+    st.session_state.pdf_filename = None
+if 'midi_data' not in st.session_state:
+    st.session_state.midi_data = None
+if 'midi_filename' not in st.session_state:
+    st.session_state.midi_filename = None
+if 'wav_data' not in st.session_state:
+    st.session_state.wav_data = None
+
 with tab1:
     # Text input area
     st.subheader("Enter LilyPond Notation")
@@ -175,10 +190,17 @@ with tab1:
     # Button to load sample
     if st.button("Load Sample"):
         ly_text = piano_sheet
+        # Clear previous generated files when loading new content
+        st.session_state.pdf_generated = False
     else:
         ly_text = st.session_state.get('ly_text', '')
     
     text_area = st.text_area("LilyPond Code", value=ly_text, height=400)
+    
+    # Clear previous generated files if text changes
+    if 'ly_text' in st.session_state and st.session_state.ly_text != text_area:
+        st.session_state.pdf_generated = False
+    
     st.session_state['ly_text'] = text_area
     
     # Output options
@@ -192,6 +214,14 @@ with tab2:
     st.subheader("Upload LilyPond File")
     uploaded_file = st.file_uploader("Choose a LilyPond file", type=['ly'])
     
+    # Clear previous generated files if a new file is uploaded
+    if uploaded_file is not None and 'last_uploaded_file' in st.session_state:
+        if st.session_state.last_uploaded_file != uploaded_file.name:
+            st.session_state.pdf_generated = False
+            st.session_state.last_uploaded_file = uploaded_file.name
+    elif uploaded_file is not None:
+        st.session_state.last_uploaded_file = uploaded_file.name
+    
     # Output options for file upload
     if uploaded_file is not None:
         # Default filename from uploaded file
@@ -204,13 +234,132 @@ with tab2:
     # Convert button
     convert_file = st.button("Convert to PDF", key="convert_file")
 
-# Function to create a download link for a file
-def get_binary_file_downloader_html(bin_file, file_label='File'):
-    with open(bin_file, 'rb') as f:
-        data = f.read()
-    b64 = base64.b64encode(data).decode()
-    href = f'<a href="data:application/octet-stream;base64,{b64}" download="{os.path.basename(bin_file)}">{file_label}</a>'
-    return href
+# Function to find FluidSynth
+@st.cache_resource
+def find_fluidsynth():
+    """Attempt to find the FluidSynth executable on the system."""
+    try:
+        # Try to get FluidSynth version which will fail if not installed
+        result = subprocess.run(['fluidsynth', '--version'], 
+                                capture_output=True, text=True, check=False)
+        if result.returncode == 0:
+            return 'fluidsynth'  # It's in the PATH
+    except FileNotFoundError:
+        pass
+        
+    # Common installation paths to check
+    common_paths = []
+    
+    # Windows common paths
+    if os.name == 'nt':
+        program_files = os.environ.get('PROGRAMFILES', 'C:\\Program Files')
+        program_files_x86 = os.environ.get('PROGRAMFILES(X86)', 'C:\\Program Files (x86)')
+        
+        for base_dir in [program_files, program_files_x86]:
+            common_paths.extend([
+                os.path.join(base_dir, 'FluidSynth', 'bin', 'fluidsynth.exe'),
+            ])
+    
+    # macOS common paths
+    elif platform.system() == 'darwin':
+        common_paths.extend([
+            '/usr/local/bin/fluidsynth',
+            '/opt/homebrew/bin/fluidsynth'
+        ])
+    
+    # Linux common paths
+    else:
+        common_paths.extend([
+            '/usr/bin/fluidsynth',
+            '/usr/local/bin/fluidsynth'
+        ])
+    
+    # Check each path
+    for path in common_paths:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+            
+    return None
+
+# Function to find SoundFont file
+@st.cache_resource
+def find_soundfont():
+    """Attempt to find a suitable SoundFont file on the system."""
+    # Common SoundFont paths
+    common_paths = []
+    
+    # Windows common paths
+    if os.name == 'nt':
+        program_files = os.environ.get('PROGRAMFILES', 'C:\\Program Files')
+        program_files_x86 = os.environ.get('PROGRAMFILES(X86)', 'C:\\Program Files (x86)')
+        
+        for base_dir in [program_files, program_files_x86]:
+            common_paths.extend([
+                os.path.join(base_dir, 'FluidSynth', 'share', 'soundfonts', 'default.sf2'),
+            ])
+    
+    # macOS common paths
+    elif platform.system() == 'darwin':
+        common_paths.extend([
+            '/usr/local/share/soundfonts/default.sf2',
+            '/opt/homebrew/share/soundfonts/default.sf2'
+        ])
+    
+    # Linux common paths
+    else:
+        common_paths.extend([
+            '/usr/share/sounds/sf2/FluidR3_GM.sf2',
+            '/usr/share/soundfonts/default.sf2',
+            '/usr/share/soundfonts/FluidR3_GM.sf2'
+        ])
+    
+    # Check each path
+    for path in common_paths:
+        if os.path.isfile(path):
+            return path
+            
+    return None
+
+# Function to convert MIDI to WAV
+def midi_to_wav(midi_path):
+    """Convert a MIDI file to WAV using FluidSynth."""
+    fluidsynth_path = find_fluidsynth()
+    soundfont_path = find_soundfont()
+    
+    if not fluidsynth_path:
+        st.warning("FluidSynth not found. Audio preview unavailable.")
+        return None
+        
+    if not soundfont_path:
+        st.warning("SoundFont not found. Audio preview unavailable.")
+        return None
+    
+    output_dir = os.path.dirname(midi_path)
+    wav_path = os.path.splitext(midi_path)[0] + '.wav'
+    
+    try:
+        command = [
+            fluidsynth_path,
+            '-ni',
+            soundfont_path,
+            midi_path,
+            '-F', wav_path
+        ]
+        
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode != 0:
+            st.warning(f"Error converting MIDI to WAV: {result.stderr}")
+            return None
+            
+        return wav_path
+    except Exception as e:
+        st.warning(f"Error in MIDI to WAV conversion: {str(e)}")
+        return None
 
 # Processing logic
 if (convert_text or convert_file) and lilypond_path:
@@ -265,23 +414,11 @@ if (convert_text or convert_file) and lilypond_path:
             import shutil
             shutil.copy2(temp_pdf_path, final_pdf_path)
             
-            # Success message and download link
-            status_container.success("PDF generated successfully!")
-            
-            # Create download button
-            pdf_filename = os.path.basename(final_pdf_path)
+            # Store PDF data in session state
             with open(final_pdf_path, "rb") as pdf_file:
-                PDFbyte = pdf_file.read()
-            
-            st.download_button(
-                label="Download PDF",
-                data=PDFbyte,
-                file_name=pdf_filename,
-                mime="application/octet-stream"
-            )
-            
-            # Instead of embedding PDF which gets blocked, show a message
-            st.info("PDF preview is not available due to browser security restrictions. Please download the PDF to view it.")
+                pdf_data = pdf_file.read()
+                st.session_state.pdf_data = pdf_data
+                st.session_state.pdf_filename = f"{output_name}.pdf"
             
             # Also generate MIDI if available
             temp_midi_path = os.path.join(temp_dir, "score.midi")
@@ -290,15 +427,30 @@ if (convert_text or convert_file) and lilypond_path:
                 shutil.copy2(temp_midi_path, final_midi_path)
                 
                 with open(final_midi_path, "rb") as midi_file:
-                    MIDIbyte = midi_file.read()
+                    midi_data = midi_file.read()
+                    st.session_state.midi_data = midi_data
+                    st.session_state.midi_filename = f"{output_name}.midi"
                 
-                st.download_button(
-                    label="Download MIDI",
-                    data=MIDIbyte,
-                    file_name=f"{output_name}.midi",
-                    mime="audio/midi",
-                    key="midi_download"
-                )
+                # Try to convert MIDI to WAV for audio playback
+                wav_path = midi_to_wav(final_midi_path)
+                if wav_path and os.path.exists(wav_path):
+                    with open(wav_path, "rb") as wav_file:
+                        st.session_state.wav_data = wav_file.read()
+                else:
+                    st.session_state.wav_data = None
+            else:
+                st.session_state.midi_data = None
+                st.session_state.midi_filename = None
+                st.session_state.wav_data = None
+            
+            # Mark as successful
+            st.session_state.pdf_generated = True
+            
+            # Remove status message as we'll show success in the permanent UI
+            status_container.empty()
+            
+            # Force a rerun to show the download buttons
+            st.experimental_rerun()
     
     except Exception as e:
         st.error(f"Error during conversion: {str(e)}")
