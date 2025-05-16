@@ -5,6 +5,7 @@ import tempfile
 import base64
 from pathlib import Path
 import platform
+import re
 
 st.set_page_config(
     page_title="LilyPond to PDF Converter",
@@ -17,6 +18,26 @@ st.title("LilyPond to PDF Converter")
 st.markdown("""
 This app converts LilyPond notation to PDF sheet music and MIDI files.
 """)
+
+# Function to extract title from LilyPond code
+def extract_title_from_lilypond(ly_content):
+    """Extract the title from LilyPond header."""
+    # Look for the header block
+    header_match = re.search(r'\\header\s*{([^}]*)}', ly_content, re.DOTALL)
+    if not header_match:
+        return None
+        
+    header_content = header_match.group(1)
+    
+    # Look for the title within the header
+    title_match = re.search(r'title\s*=\s*"([^"]*)"', header_content)
+    if title_match:
+        title = title_match.group(1)
+        # Convert title to a valid filename by replacing problematic characters
+        safe_title = re.sub(r'[\\/:*?"<>|]', '_', title)
+        return safe_title
+    
+    return None
 
 # Check if LilyPond is installed on the server
 @st.cache_resource
@@ -199,8 +220,12 @@ with tab1:
     
     st.session_state['ly_text'] = text_area
     
+    # Try to extract title from the LilyPond code for the default filename
+    extracted_title = extract_title_from_lilypond(text_area)
+    default_filename = extracted_title if extracted_title else "my_sheet_music"
+    
     # Output options
-    output_filename = st.text_input("Output Filename", value="my_sheet_music")
+    output_filename = st.text_input("Output Filename", value=default_filename)
 
 with tab2:
     # File upload
@@ -217,8 +242,14 @@ with tab2:
     
     # Output options for file upload
     if uploaded_file is not None:
-        # Default filename from uploaded file
-        default_name = os.path.splitext(uploaded_file.name)[0]
+        # Try to extract title from the uploaded file
+        uploaded_content = uploaded_file.getvalue().decode("utf-8")
+        extracted_title = extract_title_from_lilypond(uploaded_content)
+        if extracted_title:
+            default_name = extracted_title
+        else:
+            # Use filename if no title in header
+            default_name = os.path.splitext(uploaded_file.name)[0]
     else:
         default_name = "output"
         
