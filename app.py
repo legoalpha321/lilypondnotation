@@ -280,14 +280,8 @@ if (convert_text or convert_file) and lilypond_path:
                 mime="application/octet-stream"
             )
             
-            # Try to display the PDF
-            st.subheader("Preview")
-            st.markdown(f"*Note: PDF preview may not work in all browsers.*")
-            
-            # Create an iframe with the PDF content
-            base64_pdf = base64.b64encode(PDFbyte).decode('utf-8')
-            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600" type="application/pdf"></iframe>'
-            st.markdown(pdf_display, unsafe_allow_html=True)
+            # Instead of embedding PDF which gets blocked, show a message
+            st.info("PDF preview is not available due to browser security restrictions. Please download the PDF to view it.")
             
             # Also generate MIDI if available
             temp_midi_path = os.path.join(temp_dir, "score.midi")
