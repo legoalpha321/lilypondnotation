@@ -1,2 +1,1 @@
-lilypond=2.24.0
-fonts-texgyre
+lilypond
